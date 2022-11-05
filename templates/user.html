@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}{{ domain }} - Bridgy Fed{% endblock %}
+
+{% block content %}
+
+<div id="user" class="row big">
+  <a href="http://{{ domain }}/" title="{{ domain }}" rel="me" class="u-url">
+    {{ domain }}
+  </a>
+</div>
+
+<p id="responses" class="big">Responses:</p>
+<ul class="user-items">
+  {% for response in responses %}
+  <li class="row">
+   <div class="col-sm-3">
+    {{ util.pretty_link(response.source())|safe }}
+   </div><div class="col-sm-3">
+    {{ util.pretty_link(response.target())|safe }}
+   </div><div class="col-sm-1">
+     response.direction
+   </div><div class="col-sm-3">
+     response.protocol
+   </div><div class="col-sm-2">
+     {{ logs.maybe_link(response.updated, response.key)|safe }}
+     {% if response.status == 'error' %}
+      <span title="Error" class="glyphicon glyphicon-exclamation-sign"></span>
+     {% else %}{% if response.status == 'processing' %}
+      <span title="Processing" class="glyphicon glyphicon-transfer"></span>
+     {% endif %}{% endif %}
+   </div>
+  </li>
+  {% endfor %}
+</ul>
+
+{% endblock %}

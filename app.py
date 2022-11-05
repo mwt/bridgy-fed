@@ -1,7 +1,8 @@
 """Main Flask application."""
-from flask import Flask
+from flask import Flask, render_template
 from flask_caching import Cache
 import flask_gae_static
+from google.cloud.ndb import AND, OR, Key
 from oauth_dropins.webutil import (
     appengine_info,
     appengine_config,
@@ -10,6 +11,7 @@ from oauth_dropins.webutil import (
 )
 
 import common
+from models import Response
 
 
 app = Flask(__name__, static_folder=None)
@@ -35,6 +37,25 @@ app.wsgi_app = flask_util.ndb_context_middleware(
 cache = Cache(app)
 
 util.set_user_agent('Bridgy Fed (https://fed.brid.gy/)')
+
+
+@app.get(f'/domain/<regex("{common.DOMAIN_RE}"):domain>')
+def domain(domain):
+    """Serves a domain page."""
+    responses = Response.query(
+        OR(AND(Response.key > Key('Response', f'http://{domain}/'),
+               Response.key < Key('Response', f'http://{domain}{chr(ord("/") + 1)}')),
+           AND(Response.key > Key('Response', f'https://{domain}/'),
+               Response.key < Key('Response', f'https://{domain}{chr(ord("/") + 1)}')))
+    ).order(-Response.updated)
+
+    return render_template(
+        'user.html',
+        domain= domain,
+        responses= responses,
+        logs= logs,
+        util= util,
+    )
 
 
 import activitypub, add_webmention, logs, redirect, render, salmon, superfeedr, webfinger, webmention
