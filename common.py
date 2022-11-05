@@ -73,8 +73,9 @@ def requests_post(url, **kwargs):
 
 
 def _requests_fn(fn, url, parse_json=False, **kwargs):
-    """Wraps requests.* and adds raise_for_status()."""
-    resp = fn(url, gateway=True, **kwargs)
+    """Wraps requests.*."""
+    kwargs.setdefault('gateway', True)
+    resp = fn(url, **kwargs)
 
     logger.info(f'Got {resp.status_code} headers: {resp.headers}')
     type = content_type(resp)

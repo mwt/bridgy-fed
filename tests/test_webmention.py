@@ -723,6 +723,94 @@ class WebmentionTest(testutil.TestCase):
         self.assertEqual('complete', resp.status)
         self.assertEqual(self.follow_mf2, json_loads(resp.source_mf2))
 
+    def test_activitypub_delete(self, mock_get, mock_post):
+        Response(id='http://final/delete https://inbox/1', status='complete',
+                 direction='out', protocol='activitypub').put()
+        Response(id='http://final/delete https://orig', status='complete',
+                 direction='out', protocol='activitypub').put()
+
+        mock_get.side_effect = [
+            requests_response('"unused"', status=410, url='http://final/delete'),
+        ]
+
+        got = self.client.post('/webmention', data={
+            'source': 'http://final/delete',
+            'target': 'https://fed.brid.gy/',
+        })
+        self.assertEqual(200, got.status_code, got.text)
+        args, kwargs = mock_post.call_args
+        self.assertEqual(('https://foo.com/inbox',), args)
+        self.assertEqual({
+            '@context': 'https://www.w3.org/ns/activitystreams',
+            'id': 'http://a/delete',
+            'type': 'Delete',
+            'actor': 'http://localhost/orig',
+            'object': 'http://localhost/r/http://a/repost',
+        }, json_loads(kwargs['data']))
+
+        headers = kwargs['headers']
+        self.assertEqual(CONTENT_TYPE_AS2, headers['Content-Type'])
+
+        resp = Response.get_by_id('http://a/delete http://foo.com/inbox')
+        self.assertEqual('out', resp.direction)
+        self.assertEqual('activitypub', resp.protocol)
+        self.assertEqual('complete', resp.status)
+        self.assertEqual('"unused"', resp.source_mf2)
+
+    def test_activitypub_delete_no_response(self, mock_get, mock_post):
+        mock_get.side_effect = [
+            requests_response('"unused"', status=410, url='http://final/delete'),
+        ]
+        got = self.client.post('/webmention', data={
+            'source': 'http://a/delete',
+            'target': 'https://fed.brid.gy/',
+        })
+        self.assertEqual(400, got.status_code, got.text)
+        mock_post.assert_not_called()
+
+    def test_activitypub_delete_incomplete_response(self, mock_get, mock_post):
+        Response(id='http://final/delete https://inbox', status='new',
+                 direction='out', protocol='activitypub')
+
+        mock_get.side_effect = [
+            requests_response('"unused"', status=410, url='http://final/delete'),
+        ]
+        got = self.client.post('/webmention', data={
+            'source': 'http://a/delete',
+            'target': 'https://fed.brid.gy/',
+        })
+        self.assertEqual(400, got.status_code, got.text)
+        mock_post.assert_not_called()
+
+    def _test_activitypub_delete(self, mock_get, mock_post):
+        mock_get.side_effect = [requests_response('"delete"', status=410)]
+        mock_post.return_value = requests_response('abc xyz')
+
+        got = self.client.post('/webmention', data={
+            'source': 'http://a/delete',
+            'target': 'https://fed.brid.gy/',
+        })
+        self.assertEqual(200, got.status_code)
+
+        args, kwargs = mock_post.call_args
+        self.assertEqual(('https://foo.com/inbox',), args)
+        self.assertEqual({
+            '@context': 'https://www.w3.org/ns/activitystreams',
+            'id': 'http://a/delete',
+            'type': 'Delete',
+            'actor': 'http://localhost/orig',
+            'object': 'http://localhost/r/http://a/repost',
+        }, json_loads(kwargs['data']))
+
+        headers = kwargs['headers']
+        self.assertEqual(CONTENT_TYPE_AS2, headers['Content-Type'])
+
+        resp = Response.get_by_id('http://a/delete http://foo.com/inbox')
+        self.assertEqual('out', resp.direction)
+        self.assertEqual('activitypub', resp.protocol)
+        self.assertEqual('complete', resp.status)
+        self.assertEqual('"unused"', resp.source_mf2)
+
     def test_activitypub_error_no_salmon_fallback(self, mock_get, mock_post):
         mock_get.side_effect = [self.follow, self.actor]
         mock_post.return_value = requests_response(

@@ -30,7 +30,7 @@ from models import Follower, MagicKey, Response
 logger = logging.getLogger(__name__)
 
 SKIP_EMAIL_DOMAINS = frozenset(('localhost', 'snarfed.org'))
-
+CHAR_AFTER_SPACE = chr(ord(' ') + 1)
 
 class Webmention(View):
     """Handles inbound webmention, converts to ActivityPub or Salmon."""
@@ -45,7 +45,11 @@ class Webmention(View):
 
         # fetch source page
         source = flask_util.get_required_param('source')
-        source_resp = common.requests_get(source)
+        source_resp = common.requests_get(source, gateway=False)
+        if source_resp.status_code == 410:
+            return self.try_activitypub_delete(source_resp.url)
+        source_resp.raise_for_status()
+
         self.source_url = source_resp.url or source
         self.source_domain = urllib.parse.urlparse(self.source_url).netloc.split(':')[0]
         self.source_mf2 = util.parse_mf2(source_resp)
@@ -139,6 +143,47 @@ class Webmention(View):
         else:
             return str(error)
 
+    def try_activitypub_delete(self, url):
+        """Attempts to send an ActivityPub Delete.
+
+        Args:
+          url: str
+
+        Returns: Flask response (string body or tuple)
+        """
+        logger.info(f'Looking for activities from {url} to delete')
+        resps = Response.query(
+            Response.key >= Key('Response', f'{url} '),
+            Response.key < Key('Response', f'{url}{CHAR_AFTER_SPACE}'),
+            Response.status == 'complete',
+        ).fetch()
+        print(resps)
+        if not resps:
+            msg = f"Bridgy Fed hasn't successfully published {url}"
+            logging.info(msg)
+            return msg, 400
+
+        error = None
+        for resp in resps:
+            logger.info(f'Found {resp.key} {resp.status}')
+            if resp.status == 'complete':
+                try:
+                    last = activitypub.send({
+                        '@context': 'https://www.w3.org/ns/activitystreams',
+                        'id': 'http://a/delete',
+                        'type': 'Delete',
+                        'actor': 'http://localhost/orig',
+                        'object': 'http://localhost/r/http://a/repost',
+                        # STATE: here, inbox
+                    }, inbox, self.source_domain)
+                    resp.status = 'deleted'
+                    resp.put()
+                except BaseException as e:
+                    error = e
+                    resp.status = 'error'
+
+        return str(error), 400 if error else ''
+
     def _targets(self):
         """
         Returns: list of string URLs, the source's inReplyTos or objects
@@ -164,12 +209,12 @@ class Webmention(View):
             inboxes = set()
             for follower in Follower.query().filter(
                 Follower.key > Key('Follower', self.source_domain + ' '),
-                Follower.key < Key('Follower', self.source_domain + chr(ord(' ') + 1))):
+                Follower.key < Key('Follower', self.source_domain + CHAR_AFTER_SPACE)):
                 if follower.status != 'inactive' and follower.last_follow:
                     actor = json_loads(follower.last_follow).get('actor')
                     if actor and isinstance(actor, dict):
                         inboxes.add(actor.get('endpoints', {}).get('sharedInbox') or
-                                    actor.get('publicInbox')or
+                                    actor.get('publicInbox') or
                                     actor.get('inbox'))
             return [(Response.get_or_create(
                         source=self.source_url, target=inbox, direction='out',
@@ -196,6 +241,7 @@ class Webmention(View):
               source=self.source_url, target=target_url, direction='out',
               protocol='activitypub', source_mf2=json_dumps(self.source_mf2))
 
+          # STATE: get inbox from here
           # find target's inbox
           target_obj = self.target_resp.json()
           resp.target_as2 = json_dumps(target_obj)
@@ -226,6 +272,7 @@ class Webmention(View):
 
           inbox_url = urllib.parse.urljoin(target_url, inbox_url)
           resps_and_inbox_urls.append((resp, inbox_url))
+        # END STATE
 
         return resps_and_inbox_urls
 
