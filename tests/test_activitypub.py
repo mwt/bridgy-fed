@@ -366,6 +366,34 @@ class ActivityPubTest(testutil.TestCase):
         self.assertEqual('active', follower.status)
         self.assertEqual(FOLLOW_WRAPPED_WITH_ACTOR, json_loads(follower.last_follow))
 
+    def test_inbox_follow_accept_error(self, mock_head, mock_get, mock_post):
+        """If the Accept fails, we should still store the Response."""
+        mock_head.return_value = requests_response(url='https://www.realize.be/')
+        mock_get.side_effect = [
+            requests_response(FOLLOW_WITH_ACTOR['actor'],
+                              content_type=common.CONTENT_TYPE_AS2),
+        ]
+        mock_post.return_value = requests_response(status=401)
+
+        got = self.client.post('/foo.com/inbox', json=FOLLOW_WRAPPED)
+        self.assertEqual(502, got.status_code)
+
+        self.assert_req(mock_get, FOLLOW['actor'],
+                        headers=common.CONNEG_HEADERS_AS2_HTML)
+
+        # check failed Accept
+        self.assertEqual(1, len(mock_post.call_args_list))
+        args, kwargs = mock_post.call_args_list[0]
+        self.assertEqual(('http://follower/inbox',), args)
+        self.assertEqual(ACCEPT, json_loads(kwargs['data']))
+
+        # check stored Response, should be error
+        resp = Response.get_by_id('https://mastodon.social/6d1a https://www.realize.be/')
+        self.assertEqual('in', resp.direction)
+        self.assertEqual('activitypub', resp.protocol)
+        self.assertEqual('error', resp.status)
+        self.assertEqual(FOLLOW_WITH_ACTOR, json_loads(resp.source_as2))
+
     def test_inbox_undo_follow(self, mock_head, mock_get, mock_post):
         mock_head.return_value = requests_response(url='https://www.realize.be/')
 
